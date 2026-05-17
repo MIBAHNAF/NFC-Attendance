@@ -1,6 +1,10 @@
 import asyncio, threading, queue, serial
 from serial.tools import list_ports
-from bleak import BleakScanner, BleakClient
+
+try:
+    from bleak import BleakScanner, BleakClient
+except ImportError:
+    BleakScanner = BleakClient = None
 
 HELLO = b"HELLO\r\n"
 UART_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb"
@@ -61,14 +65,23 @@ class BleReader(BaseReader):
         self._buf = bytearray()
 
     async def _ble_main(self):
-        self.log("[BLE] Scanning …")
-        devs = await BleakScanner.discover(timeout=5)
+        if BleakScanner is None or BleakClient is None:
+            self.log("[BLE] Not found - using USB")
+            return
+
+        self.log("[BLE] Scanning...")
+        try:
+            devs = await BleakScanner.discover(timeout=5)
+        except OSError:
+            self.log("[BLE] Not ready - using USB")
+            return
+
         if self.mac:
             tgt = next((d for d in devs if d.address.lower() == self.mac.lower()), None)
         else:
             tgt = next((d for d in devs if (d.name or "").startswith(self.name)), None)
         if not tgt:
-            self.log("[BLE] HM‑10 not found")
+            self.log("[BLE] Not found - using USB")
             return
 
         self.log(f"[BLE] Connecting to {tgt.name} @ {tgt.address}")
@@ -82,16 +95,24 @@ class BleReader(BaseReader):
                 if s:
                     self.q.put(s)
 
-        async with BleakClient(tgt) as cli:
-            await cli.start_notify(CHAR_UUID, handler)
-            self.log("[BLE] Subscribed — streaming")
-            while True:
-                await asyncio.sleep(3600)
+        try:
+            async with BleakClient(tgt) as cli:
+                await cli.start_notify(CHAR_UUID, handler)
+                self.log("[BLE] Subscribed - streaming")
+                while True:
+                    await asyncio.sleep(3600)
+        except OSError:
+            self.log("[BLE] Connection failed - using USB")
 
     def _run(self):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(self._ble_main())
+        try:
+            loop.run_until_complete(self._ble_main())
+        except Exception:
+            self.log("[BLE] Disabled - using USB")
+        finally:
+            loop.close()
 
     def start(self):
         threading.Thread(target=self._run, daemon=True).start()

@@ -44,6 +44,8 @@ def update_status(msg: str, colour="white"):
 def update_date_label():
     date_label.config(text=f"Attendance for {datetime.today():%B %d}")
 
+is_ready = False
+
 # ---------------- Excel open ----------------
 wb = openpyxl.load_workbook(EXCEL_FILE, keep_vba=True)
 ws = wb[SHEET_NAME]
@@ -63,12 +65,16 @@ if not date_col:
 serial_queue: queue.Queue[str] = queue.Queue()
 
 def gui_logger(msg: str):
+    global is_ready
     # Default cyan for progress messages
     colour = "cyan"
-    if "Subscribed" in msg:
+    if "Connected" in msg or "Subscribed" in msg:
+        is_ready = True
         colour = "blue"
-        # After 0.8 s flip to ready‑green
-        root.after(800, lambda: update_status("Ready to scan…", "lime"))
+        # After a short connection confirmation, show the scan-ready state.
+        root.after(800, lambda: update_status("NFC ready", "lime"))
+    elif "using USB" in msg and is_ready:
+        return
     update_status(msg, colour)
 
 USBReader(serial_queue, logger=gui_logger).start()
